@@ -207,13 +207,15 @@ The validation, ranking, and assembly layers pick it up automatically — no oth
 |--------|-------|--------|-----|
 | `gas_volatility` | [7610937](https://dune.com/queries/7610937) | Live | `docs/dune_queries/gas_volatility.sql` |
 | `smart_money` | [7611082](https://dune.com/queries/7611082) | Live | `docs/dune_queries/smart_money.sql` |
-| `whale_flow` | — | Deferred | — |
+| `whale_flow` | [7611264](https://dune.com/queries/7611264) | Live | `examples/dune_whale_flow.sql` |
 
 **`gas_volatility`** — HyperEVM block gas coefficient of variation over a 1h rolling window. Proxy for network congestion and execution risk. High CV = bearish (elevated fees), low CV = bullish (calm network).
 
 **`smart_money`** — Net USDC bridge flow of curated known wallets (Wintermute, Fasanara Capital, Abraxas Capital, James Wynn, and others) into/out of Hyperliquid over the last 24h. Source: `erc20_arbitrum.evt_Transfer`, near real-time. Net deposit = bullish positioning intent, net withdrawal = de-risking.
 
-Both are global signals (not asset-specific). The Dune queries accept an `{{asset}}` parameter so rows are tagged correctly for the pipeline's asset filter.
+**`whale_flow`** — Net USDC flow of individual transfers >=\$500k through the Hyperliquid bridge, last 24h. Source: `erc20_arbitrum.evt_Transfer`, both native USDC and USDC.e. No wallet filter — size is the signal. Direction thresholds: ±\$5M (2-3 whale moves).
+
+All three are global signals (not asset-specific). The Dune queries accept an `{{asset}}` parameter so rows are tagged correctly for the pipeline's asset filter.
 
 To add more Dune signals: write a query that outputs `asset, value, direction_hint, summary` columns, save it on Dune, and add its ID to `QUERY_IDS` in `src/signal_pipeline/sources/dune.py`.
 
@@ -221,7 +223,6 @@ To add more Dune signals: write a query that outputs `asset, value, direction_hi
 
 ## Known limitations
 
-- **`whale_flow` deferred.** Requires UTXO table access on Dune, which is more expensive to query.
 - **Social source is a stub.** `social.py` returns `[]`. Twitter/X API v2 is expensive; interface is defined for when it's implemented.
 - **Polymarket market matching is fuzzy.** Gamma API local filtering catches most BTC/Bitcoin markets but niche assets may return zero matches or near-matches.
 - **No persistence.** `MemoryStore` is process-local. A ClickHouse or TimescaleDB backend would need to implement `store/base.py` `SignalStore` ABC.
