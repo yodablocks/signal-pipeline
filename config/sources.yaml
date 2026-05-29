@@ -1,0 +1,25 @@
+# sources.yaml — Signal source configuration
+# API keys are read from environment variables. Never hardcode here.
+
+sources:
+  perp:
+    enabled: true
+    clip_usds: [1000, 10000, 100000, 500000]
+
+  dune:
+    enabled: true
+    api_key_env: DUNE_API_KEY
+    poll_interval_seconds: 300   # 5 minutes — Dune indexed data, not real-time
+    queries:
+      whale_flow: 0              # TODO: set real Dune query IDs
+      smart_money: 0
+      gas_volatility: 0
+
+  polymarket:
+    enabled: true
+    max_markets_per_asset: 5
+    poll_interval_seconds: 300
+
+  social:
+    enabled: false               # stub — set true when Twitter/X API implemented
+    bearer_token_env: TWITTER_BEARER_TOKEN

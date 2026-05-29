@@ -1,0 +1,202 @@
+{
+  "asset": "BTC",
+  "position_context": {
+    "side": "long",
+    "size_usd": 50000.0
+  },
+  "fetched_at": "2026-05-29T13:33:35.581023+00:00",
+  "signal_count": 10,
+  "signals": [
+    {
+      "rank": 1,
+      "signal_type": "oi_dominance",
+      "source": "hyperliquid",
+      "trust_tier": 1,
+      "direction": "bullish",
+      "value": 64.644632,
+      "confidence": 1.0,
+      "score": 0.9697,
+      "position_relevant": true,
+      "summary": "hyperliquid OI $2274M (64.6% market share). Rank 1/8.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "hyperliquid OI share",
+        "value": 64.644632249169,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 2,
+      "signal_type": "funding_rate",
+      "source": "grvt",
+      "trust_tier": 1,
+      "direction": "bearish",
+      "value": 10.95,
+      "confidence": 1.0,
+      "score": 0.7911,
+      "position_relevant": true,
+      "summary": "grvt funding APR +10.95% (shorts paid). Rank 8/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "grvt funding APR",
+        "value": 10.950000000000001,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 3,
+      "signal_type": "funding_rate",
+      "source": "lighter",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.84096,
+      "confidence": 1.0,
+      "score": 0.7532,
+      "position_relevant": true,
+      "summary": "lighter funding APR +0.84% (shorts paid). Rank 7/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "lighter funding APR",
+        "value": 0.8409599999999999,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 4,
+      "signal_type": "funding_rate",
+      "source": "extended",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.11388,
+      "confidence": 1.0,
+      "score": 0.7504,
+      "position_relevant": true,
+      "summary": "extended funding APR +0.11% (shorts paid). Rank 6/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "extended funding APR",
+        "value": 0.11388,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 5,
+      "signal_type": "funding_rate",
+      "source": "apex",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.1095,
+      "confidence": 1.0,
+      "score": 0.7504,
+      "position_relevant": true,
+      "summary": "apex funding APR +0.11% (shorts paid). Rank 5/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "apex funding APR",
+        "value": 0.1095,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 6,
+      "signal_type": "funding_rate",
+      "source": "paradex",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.109168,
+      "confidence": 1.0,
+      "score": 0.7504,
+      "position_relevant": true,
+      "summary": "paradex funding APR +0.11% (shorts paid). Rank 4/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "paradex funding APR",
+        "value": 0.10916785332149999,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 7,
+      "signal_type": "funding_rate",
+      "source": "hyperliquid",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.052443,
+      "confidence": 1.0,
+      "score": 0.7502,
+      "position_relevant": true,
+      "summary": "hyperliquid funding APR +0.05% (shorts paid). Rank 3/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "hyperliquid funding APR",
+        "value": 0.052442616000000004,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 8,
+      "signal_type": "funding_rate",
+      "source": "aster",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": 0.022426,
+      "confidence": 1.0,
+      "score": 0.7501,
+      "position_relevant": true,
+      "summary": "aster funding APR +0.02% (shorts paid). Rank 2/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "aster funding APR",
+        "value": 0.0224256,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 9,
+      "signal_type": "funding_rate",
+      "source": "edgex",
+      "trust_tier": 1,
+      "direction": "neutral",
+      "value": -0.11526,
+      "confidence": 1.0,
+      "score": 0.7496,
+      "position_relevant": true,
+      "summary": "edgex funding APR -0.12% (longs paid). Rank 1/8 in panel.",
+      "timestamp": "2026-05-29T13:33:35.579221+00:00",
+      "chart_series": {
+        "type": "bar",
+        "label": "edgex funding APR",
+        "value": -0.1152597,
+        "unit": "%"
+      }
+    },
+    {
+      "rank": 10,
+      "signal_type": "outcome_prob",
+      "source": "polymarket",
+      "trust_tier": 2,
+      "direction": "neutral",
+      "value": 0.5,
+      "confidence": 0.9,
+      "score": 0.4294,
+      "position_relevant": true,
+      "summary": "Polymarket: 'Will bitcoin hit $1m before GTA VI?' \u2014 YES 50.0% implied probability. Relevant to BTC.",
+      "timestamp": "2026-05-29T13:27:51.318184+00:00",
+      "chart_series": {
+        "type": "gauge",
+        "label": "Will bitcoin hit $1m before GTA VI?",
+        "value": 0.5,
+        "unit": "probability"
+      }
+    }
+  ],
+  "token_estimate": 950
+}
