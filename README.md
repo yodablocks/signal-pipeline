@@ -59,8 +59,14 @@ pip install -e ../perp-liquidity   # tier-1 signals from 8 perp DEXes
 **Environment variables** (all optional — sources return `[]` without them):
 
 ```
-DUNE_API_KEY=...           # Dune Analytics (tier-2 whale flow, smart money)
+DUNE_API_KEY=...           # Dune Analytics (tier-2 gas volatility signal)
 TWITTER_BEARER_TOKEN=...   # Social source — stub, not yet implemented
+```
+
+A `.env` file is supported — `python-dotenv` loads it automatically on CLI startup:
+
+```
+DUNE_API_KEY=your_key_here
 ```
 
 ---
@@ -195,9 +201,24 @@ The validation, ranking, and assembly layers pick it up automatically — no oth
 
 ---
 
+## Dune signals
+
+| Signal | Query | Status | SQL |
+|--------|-------|--------|-----|
+| `gas_volatility` | [7610937](https://dune.com/queries/7610937) | Live | `docs/dune_queries/gas_volatility.sql` |
+| `smart_money` | — | Deferred | `docs/dune_queries/smart_money.sql` |
+| `whale_flow` | — | Deferred | — |
+
+`gas_volatility` measures HyperEVM block gas coefficient of variation over a 1h rolling window — a proxy for network congestion and execution risk. It is a network-level signal (not asset-specific): the Dune query accepts an `{{asset}}` parameter so the row is tagged correctly for the pipeline's asset filter.
+
+To add more Dune signals: write a query that outputs `asset, value, direction_hint, summary` columns, save it on Dune, and add its ID to `QUERY_IDS` in `src/signal_pipeline/sources/dune.py`.
+
+---
+
 ## Known limitations
 
-- **Dune query IDs not wired.** `dune.py` has the REST plumbing but query IDs are placeholders. Set real Dune query IDs and `DUNE_API_KEY` to activate whale flow and smart money signals.
+- **`smart_money` deferred.** `hyperliquid.market_data` on Dune updates monthly — not suitable for a real-time positioning signal. Will revisit when fresher data is available.
+- **`whale_flow` deferred.** Requires UTXO table access on Dune, which is more expensive to query.
 - **Social source is a stub.** `social.py` returns `[]`. Twitter/X API v2 is expensive; interface is defined for when it's implemented.
 - **Polymarket market matching is fuzzy.** Gamma API local filtering catches most BTC/Bitcoin markets but niche assets may return zero matches or near-matches.
 - **No persistence.** `MemoryStore` is process-local. A ClickHouse or TimescaleDB backend would need to implement `store/base.py` `SignalStore` ABC.
