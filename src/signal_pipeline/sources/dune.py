@@ -30,13 +30,14 @@ log = logging.getLogger(__name__)
 
 DUNE_BASE = "https://api.dune.com/api/v1"
 
-# Dune query IDs — set to real IDs once identified.
-# Structure: map signal_type -> query_id.
-# Each query must return rows with at least: asset, value, direction_hint columns.
+# Dune query IDs — replace 0 with your saved query ID after pasting SQL into Dune.
+# SQL files: docs/dune_queries/
+# Each query must return columns: asset, value, direction_hint, summary
+# gas_volatility.sql uses {{asset}} Dune parameter — set it when saving the query.
 QUERY_IDS: dict[str, int] = {
-    SignalType.WHALE_FLOW:    0,   # TODO: replace with real query ID
-    SignalType.SMART_MONEY:   0,   # TODO: replace with real query ID
-    SignalType.GAS_VOLATILITY: 0,  # TODO: replace with real query ID
+    SignalType.WHALE_FLOW:    0,        # deferred — UTXO table access required
+    SignalType.SMART_MONEY:   0,        # deferred — hyperliquid.market_data only updates monthly
+    SignalType.GAS_VOLATILITY: 7610937, # docs/dune_queries/gas_volatility.sql
 }
 
 
@@ -90,8 +91,11 @@ class DuneSource(SignalSource):
 
             for row in rows:
                 row_asset = str(row.get("asset", "")).upper()
-                if row_asset and row_asset != asset.upper():
-                    continue
+                # gas_volatility is network-level — the SQL injects {{asset}} directly,
+                # so row_asset matches. For other signal types, skip unrelated assets.
+                if signal_type != SignalType.GAS_VOLATILITY:
+                    if row_asset and row_asset != asset.upper():
+                        continue
 
                 value = float(row.get("value", 0.0))
                 direction = _direction_from_hint(row.get("direction_hint"))
