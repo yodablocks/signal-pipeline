@@ -36,7 +36,7 @@ DUNE_BASE = "https://api.dune.com/api/v1"
 # gas_volatility.sql uses {{asset}} Dune parameter — set it when saving the query.
 QUERY_IDS: dict[str, int] = {
     SignalType.WHALE_FLOW:    0,        # deferred — UTXO table access required
-    SignalType.SMART_MONEY:   0,        # deferred — hyperliquid.market_data only updates monthly
+    SignalType.SMART_MONEY:   7611082,  # docs/dune_queries/smart_money.sql — HL bridge flow, curated wallets
     SignalType.GAS_VOLATILITY: 7610937, # docs/dune_queries/gas_volatility.sql
 }
 
@@ -91,9 +91,9 @@ class DuneSource(SignalSource):
 
             for row in rows:
                 row_asset = str(row.get("asset", "")).upper()
-                # gas_volatility is network-level — the SQL injects {{asset}} directly,
-                # so row_asset matches. For other signal types, skip unrelated assets.
-                if signal_type != SignalType.GAS_VOLATILITY:
+                # gas_volatility and smart_money are global signals — SQL injects {{asset}}
+                # directly so row_asset matches. For other types, skip unrelated assets.
+                if signal_type not in (SignalType.GAS_VOLATILITY, SignalType.SMART_MONEY):
                     if row_asset and row_asset != asset.upper():
                         continue
 
