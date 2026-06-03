@@ -1,13 +1,19 @@
 """
-cli.py — Entry point: signal-pipeline --asset BTC --top 10 [--position long:50000]
+cli.py — Entry point: signal-pipeline --asset BTC --top 10 [--position long:50000] [--explain]
 
 Runs the full pipeline:
   1. Fetch from all enabled sources concurrently
   2. Validate
   3. Store
   4. Rank
-  5. Assemble agent-ready payload
-  6. Print to stdout (or write to file)
+  5. Score (model layer — directional verdict)
+  6. Assemble agent-ready payload
+  7. Print to stdout (or write to file)
+
+Flags:
+  --explain   Print a human-readable breakdown of the model's scoring to stderr.
+              Shows each signal's vote, weight, and contribution to the verdict.
+              Does not affect the JSON payload on stdout.
 """
 
 from __future__ import annotations
@@ -52,8 +58,10 @@ async def _run(
     position_str: str | None,
     output_file: str | None,
     verbose: bool,
+    explain: bool,
 ) -> None:
     from signal_pipeline.assembler import assemble_json
+    from signal_pipeline.model import score as model_score
     from signal_pipeline.ranking import rank
     from signal_pipeline.store.memory import MemoryStore
     from signal_pipeline.validation import validate_batch
@@ -95,10 +103,29 @@ async def _run(
     ranked = rank(stored, position_assets=position_assets, token_budget=token_budget, max_signals=top)
     click.echo(f"  Ranked {len(ranked)} signals (budget: {token_budget} tokens)", err=True)
 
-    # 5. Assemble
-    payload_json = assemble_json(ranked, asset=asset, position_context=position_context)
+    # 5. Model layer — directional verdict
+    model_result = model_score(ranked, asset=asset)
+    click.echo(
+        f"  Model: {model_result.direction.upper()}  "
+        f"confidence={model_result.confidence:.1%}  "
+        f"confluence={model_result.confluence.summary()}",
+        err=True,
+    )
 
-    # 6. Output
+    if explain:
+        click.echo("", err=True)
+        click.echo(model_result.explain(), err=True)
+        click.echo("", err=True)
+
+    # 6. Assemble
+    payload_json = assemble_json(
+        ranked,
+        asset=asset,
+        position_context=position_context,
+        model_output=model_result.to_dict(),
+    )
+
+    # 7. Output
     if output_file:
         with open(output_file, "w") as f:
             f.write(payload_json)
@@ -114,18 +141,30 @@ async def _run(
 @click.option("--position", default=None, help="Open position context, e.g. long:50000 or short:25000")
 @click.option("--output", "-o", default=None, help="Write payload JSON to file instead of stdout")
 @click.option("--verbose", "-v", is_flag=True, help="Enable INFO logging")
-def main(asset, top, token_budget, position, output, verbose):
+@click.option(
+    "--explain",
+    is_flag=True,
+    help=(
+        "Print a human-readable model breakdown to stderr. "
+        "Shows each signal's direction, strength, weight, and reason. "
+        "Does not affect stdout JSON output."
+    ),
+)
+def main(asset, top, token_budget, position, output, verbose, explain):
     """
-    signal-pipeline — fetch, validate, rank, and assemble crypto signals for an AI agent.
+    signal-pipeline — fetch, validate, rank, score, and assemble crypto signals for an AI agent.
 
     Outputs a JSON payload ready for injection into a Hermes (or compatible) agent context.
+    The payload includes a model.direction field with the directional verdict.
 
     Examples:
         signal-pipeline --asset BTC
         signal-pipeline --asset HYPE --top 5 --position long:50000
         signal-pipeline --asset ETH --output payload.json
+        signal-pipeline --asset BTC --explain
+        signal-pipeline --asset BTC --explain --position long:50000 --verbose
     """
-    asyncio.run(_run(asset, top, token_budget, position, output, verbose))
+    asyncio.run(_run(asset, top, token_budget, position, output, verbose, explain))
 
 
 if __name__ == "__main__":

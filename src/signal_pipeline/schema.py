@@ -25,6 +25,11 @@ class SignalType:
     GAS_VOLATILITY     = "gas_volatility"
     OUTCOME_PROB       = "outcome_prob"
     KOL_CALL           = "kol_call"
+    # Options signals — sourced from deribit-options-flow
+    PC_RATIO           = "pc_ratio"
+    IV_SKEW            = "iv_skew"
+    NET_PREMIUM        = "net_premium"
+    MAX_PAIN_DISTANCE  = "max_pain_distance"
 
 
 class Direction:

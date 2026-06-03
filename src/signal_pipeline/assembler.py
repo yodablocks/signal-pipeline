@@ -10,6 +10,7 @@ Key design decisions:
   - chart_series is structured for direct rendering (no agent-side transformation)
   - token_estimate is included so the caller can budget context window usage
   - validation_flags are excluded from the agent payload (internal data quality layer)
+  - model_output is included when the model layer has been run
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ def assemble(
     signals: list[SignalEvent],
     asset: str,
     position_context: dict[str, Any] | None = None,
+    model_output: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build the agent-ready payload from a ranked list of SignalEvents.
@@ -34,6 +36,7 @@ def assemble(
         signals: ranked list from ranking.rank() (rank 1 = highest priority)
         asset: primary asset being analyzed
         position_context: user's open position info, e.g. {"side": "long", "size_usd": 50000}
+        model_output: directional verdict from model.score().to_dict()
 
     Returns:
         dict ready for json.dumps() — this is what Hermes receives.
@@ -70,6 +73,9 @@ def assemble(
         "token_estimate": token_estimate,
     }
 
+    if model_output is not None:
+        payload["model"] = model_output
+
     return payload
 
 
@@ -77,11 +83,12 @@ def assemble_json(
     signals: list[SignalEvent],
     asset: str,
     position_context: dict[str, Any] | None = None,
+    model_output: dict[str, Any] | None = None,
     indent: int | None = 2,
 ) -> str:
     """Convenience wrapper — returns JSON string."""
     return json.dumps(
-        assemble(signals, asset, position_context),
+        assemble(signals, asset, position_context, model_output=model_output),
         indent=indent,
         default=str,
     )
