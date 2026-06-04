@@ -35,11 +35,12 @@ log = logging.getLogger(__name__)
 
 def _default_sources():
     from signal_pipeline.sources.deribit import DeribitSource
+    from signal_pipeline.sources.liquidation import LiquidationSource
     from signal_pipeline.sources.dune import DuneSource
     from signal_pipeline.sources.perp import PerpSource
     from signal_pipeline.sources.polymarket import PolymarketSource
     from signal_pipeline.sources.social import SocialSource
-    return [DeribitSource(), PerpSource(), DuneSource(), PolymarketSource(), SocialSource()]
+    return [DeribitSource(), LiquidationSource(), PerpSource(), DuneSource(), PolymarketSource(), SocialSource()]
 
 
 def _parse_position(position_str: str | None) -> dict[str, Any]:

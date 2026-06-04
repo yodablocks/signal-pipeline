@@ -55,21 +55,22 @@ position_boost   = 1.5 if asset in open positions, else 1.0
 
 **Signal inputs:**
 
-| Signal | Source | Type |
-|--------|--------|------|
-| Funding rate | Hyperliquid / perp panel | Chain-native |
-| OI trend | Hyperliquid / perp panel | Chain-native |
-| Liquidation cluster proximity | hl-liquidation-heatmap | Chain-native |
-| P/C ratio | deribit-options-flow | Indexed |
-| IV skew (25-delta) | deribit-options-flow | Indexed |
-| Net premium flow | deribit-options-flow | Indexed |
-| Max pain distance from spot | deribit-options-flow | Indexed |
+| Signal | Source | Cluster | Type |
+|--------|--------|---------|------|
+| Funding rate (8 venues) | perp-liquidity panel | `funding_cluster` | Chain-native |
+| OI dominance (8 venues) | perp-liquidity panel | `oi_cluster` | Chain-native |
+| Liquidation cluster proximity | hl-liquidation-heatmap | `liquidation_cascade` | Chain-native |
+| P/C ratio | deribit-options-flow | `options_cluster` | Indexed |
+| IV skew (25-delta) | deribit-options-flow | `options_cluster` | Indexed |
+| Net premium flow | deribit-options-flow | `options_cluster` | Indexed |
+| Max pain distance from spot | deribit-options-flow | `options_cluster` | Indexed |
 
 **Design decisions:**
 
 - **Funding cluster**: All 8 venue funding rates are collapsed into a single `funding_cluster` vote using the **panel median**. Median is used for consistency with MAD anomaly detection — a single venue stuck at an extreme rate (e.g. GRVT at 11% APR cap) does not distort the panel picture.
 - **OI cluster**: All 8 venue OI dominance signals are collapsed into a single `oi_cluster` vote using **majority direction**. Majority vote is used (not median) because OI dominance is categorical, not a continuous value that can be meaningfully averaged.
 - **Options cluster**: P/C ratio, IV skew, net premium, and max pain are averaged into a single `options_cluster` vote. Prevents Deribit from getting 4× weight over a single chain-native signal.
+- **Liquidation cluster**: nearest significant liquidation cluster to spot, inferred from OI-delta on the HL `activeAssetCtx` WebSocket. Cluster above spot = bearish (sell-side pressure). Cluster below = bullish (buy-side magnet). Requires the `hl-liquidation-heatmap` streamer to be running to populate the local SQLite.
 - **Model scores all validated events**: `score()` receives all validated signals, not the ranking-capped top-N. Ranking controls the agent payload (token budget). Scoring is independent.
 - **Equal weights**: `SIGNAL_WEIGHTS` in `model.py` uses `1.0` across all cluster sources. **These weights are unvalidated — no backtesting data exists yet.** Replace with empirically derived weights once historical data is available.
 - **Confluence over magnitude**: confidence is `magnitude × agreement_ratio`. A unanimous 3-source agreement outranks a single strong outlier.
@@ -119,14 +120,29 @@ position_boost   = 1.5 if asset in open positions, else 1.0
 
 ```bash
 pip install -e ".[dev]"
-pip install -e ../perp-liquidity   # tier-1 signals from 8 perp DEXes
+pip install -e ../perp-liquidity          # tier-1 signals from 8 perp DEXes
+pip install -e ../deribit-options-flow    # options flow signals
+pip install -e ../hl-liquidation-heatmap  # liquidation cluster signals
 ```
+
+The liquidation source requires the streamer to be running in a separate terminal to populate data:
+
+```bash
+cd ../hl-liquidation-heatmap
+python stream.py --coins BTC,ETH,SOL
+```
+
+The streamer writes inferred liquidation events to a local SQLite (`liquidations.db`). The signal-pipeline reads from it. Without the streamer, `LiquidationSource` returns `[]` and the `liquidation_cascade` cluster abstains from the model vote.
 
 **Environment variables** (all optional — sources return `[]` without them):
 
 ```
-DUNE_API_KEY=...           # Dune Analytics (tier-2 gas volatility signal)
-TWITTER_BEARER_TOKEN=...   # Social source — stub, not yet implemented
+DUNE_API_KEY=...              # Dune Analytics (tier-2 gas volatility signal)
+TWITTER_BEARER_TOKEN=...      # Social source — stub, not yet implemented
+LIQUIDATION_DB=...            # Path to hl-liquidation-heatmap SQLite (default: liquidations.db)
+LIQUIDATION_LOOKBACK_DAYS=3   # How many days of fills to consider (default: 3)
+LIQUIDATION_MIN_CLUSTER_USD=500000  # Minimum USD notional for a cluster (default: 500k)
+LIQUIDATION_PROXIMITY_PCT=5.0       # Max % distance from spot to consider (default: 5%)
 ```
 
 A `.env` file is supported — `python-dotenv` loads it automatically on CLI startup:
@@ -172,15 +188,16 @@ signal-pipeline --help
 ```
 ━━ Model output: BTC ━━
 Direction  : BEARISH
-Confidence : 62.5%
-Confluence : 0 bullish / 2 bearish / 1 neutral out of 3 sources
+Confidence : 56.3%
+Confluence : 0 bullish / 3 bearish / 1 neutral out of 4 sources
 
 Signal breakdown:
   ▼ [options_cluster     ] bearish  strength=0.55  weight=1.0  contrib=-0.550  | options cluster bearish (P/C ratio 1.60 put-heavy; IV skew +8.0pp put premium; net put premium $-5,000,000)
   ▼ [funding_cluster     ] bearish  strength=0.50  weight=1.0  contrib=-0.500  | funding panel median 25.0% APR (crowded longs) | panel median across 8 venues (range 0.0%–80.0% APR)
+  ▼ [liquidation_cascade ] bearish  strength=0.60  weight=1.0  contrib=-0.600  | liquidation cluster $6,000,000 above spot ($68,250, 2.3% away). Sell-side pressure.
   – [oi_cluster          ] neutral  strength=0.00  weight=1.0  contrib=+0.000  | OI panel: split (3 bullish / 3 bearish / 2 neutral)
 
-Explanation: BTC directional model: BEARISH with moderate confidence (62.5%). ...
+Explanation: BTC directional model: BEARISH with moderate confidence (56.3%). ...
 ⚠  UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability.
 ```
 
@@ -352,4 +369,5 @@ To add more Dune signals: write a query that outputs `asset, value, direction_hi
 - **Social source is a stub.** `social.py` returns `[]`. Twitter/X API v2 is expensive; interface is defined for when it's implemented.
 - **Polymarket market matching is fuzzy.** Gamma API local filtering catches most BTC/Bitcoin markets but niche assets may return zero matches or near-matches.
 - **No persistence.** `MemoryStore` is process-local. A ClickHouse or TimescaleDB backend would need to implement `store/base.py` `SignalStore` ABC.
+- **Liquidation source requires a running streamer.** `LiquidationSource` reads from a local SQLite populated by `hl-liquidation-heatmap/stream.py`. If the streamer is not running or the DB is empty, `liquidation_cascade` abstains from the model vote. This is by design — no reliable free HTTP endpoint exists for historical HL liquidation data.
 - **No streaming mode.** CLI is a one-shot fetch. A polling loop or WebSocket subscription mode would be the next step for real-time agent feeds.
