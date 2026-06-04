@@ -3,7 +3,7 @@ sources/dune.py — Dune Analytics REST API source (trust_tier=2, indexed).
 
 Dune named explicitly in Faro Cycle 2 dev update as a provider.
 Queries indexed on-chain data: whale flows, smart money positioning,
-gas volatility proxy.
+gas volatility proxy, and HL top trader sentiment.
 
 Requires: DUNE_API_KEY environment variable.
 Dune API docs: https://docs.dune.com/api-reference/executions/endpoint/get-query-result
@@ -35,9 +35,10 @@ DUNE_BASE = "https://api.dune.com/api/v1"
 # Each query must return columns: asset, value, direction_hint, summary
 # gas_volatility.sql uses {{asset}} Dune parameter — set it when saving the query.
 QUERY_IDS: dict[str, int] = {
-    SignalType.WHALE_FLOW:    7611264,  # examples/dune_whale_flow.sql — HL bridge, >$500k transfers, 24h net flow
-    SignalType.SMART_MONEY:   7611082,  # docs/dune_queries/smart_money.sql — HL bridge flow, curated wallets
-    SignalType.GAS_VOLATILITY: 7610937, # docs/dune_queries/gas_volatility.sql
+    SignalType.WHALE_FLOW:      7611264,  # docs/dune_queries/whale_flow.sql — HL bridge, >$500k, 24h net
+    SignalType.SMART_MONEY:     7611082,  # docs/dune_queries/smart_money.sql — HL bridge, curated wallets
+    SignalType.GAS_VOLATILITY:  7610937,  # docs/dune_queries/gas_volatility.sql
+    SignalType.HL_TOP_TRADERS:  0,        # docs/dune_queries/hl_top_traders.sql — REPLACE 0 with query ID
 }
 
 
@@ -52,6 +53,16 @@ def _direction_from_hint(hint: str | None) -> str:
     return Direction.NEUTRAL
 
 
+# Confidence per signal type. HL_TOP_TRADERS is slightly lower than bridge-flow
+# signals because the dataset refreshes daily (vs near-real-time bridge events).
+_CONFIDENCE: dict[str, float] = {
+    SignalType.WHALE_FLOW:     0.85,
+    SignalType.SMART_MONEY:    0.85,
+    SignalType.GAS_VOLATILITY: 0.85,
+    SignalType.HL_TOP_TRADERS: 0.75,  # daily refresh, global signal
+}
+
+
 class DuneSource(SignalSource):
     """
     Fetches indexed on-chain signals from Dune Analytics.
@@ -61,6 +72,15 @@ class DuneSource(SignalSource):
 
     trust_tier=2: Dune indexes on-chain data but the indexer is a trusted third
     party, not a direct chain read. Treat accordingly in ranking.
+
+    Queries
+    -------
+    whale_flow        — net USDC bridge flow from large wallets (>$500k, 24h)
+    smart_money       — net USDC bridge flow from curated known wallets (24h)
+    gas_volatility    — HyperEVM block gas volatility proxy
+    hl_top_traders    — aggregate PnL of top-100 HL traders by volume
+                        Source: dune."swell-network".dataset_hyperliquid_top_users
+                        Published by Liquid Labs (Faro's parent company).
     """
 
     SOURCE_NAME = "dune"
@@ -91,15 +111,24 @@ class DuneSource(SignalSource):
 
             for row in rows:
                 row_asset = str(row.get("asset", "")).upper()
-                # gas_volatility and smart_money are global signals — SQL injects {{asset}}
-                # directly so row_asset matches. For other types, skip unrelated assets.
-                if signal_type not in (SignalType.GAS_VOLATILITY, SignalType.SMART_MONEY, SignalType.WHALE_FLOW):
+                # Global signals inject {{asset}} via Dune parameter — row_asset matches.
+                # For any future per-asset signal types, filter by asset here.
+                if signal_type not in (
+                    SignalType.GAS_VOLATILITY,
+                    SignalType.SMART_MONEY,
+                    SignalType.WHALE_FLOW,
+                    SignalType.HL_TOP_TRADERS,
+                ):
                     if row_asset and row_asset != asset.upper():
                         continue
 
                 value = float(row.get("value", 0.0))
                 direction = _direction_from_hint(row.get("direction_hint"))
                 summary = str(row.get("summary", f"Dune {signal_type} for {asset}"))
+                confidence = _CONFIDENCE.get(signal_type, 0.85)
+
+                # Attach extra columns to raw for MAD validation / downstream consumers.
+                raw = dict(row)
 
                 signals.append(SignalEvent(
                     source="dune",
@@ -108,12 +137,12 @@ class DuneSource(SignalSource):
                     signal_type=signal_type,
                     value=value,
                     direction=direction,
-                    confidence=0.85,    # indexed data — not fully trustless
+                    confidence=confidence,
                     trust_tier=self.TRUST_TIER,
                     timestamp=now,
                     ingested_at=now,
                     summary=summary,
-                    raw=row,
+                    raw=raw,
                 ))
 
         log.info("DuneSource fetched %d signals for %s", len(signals), asset)

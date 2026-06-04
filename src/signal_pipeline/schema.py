@@ -30,6 +30,10 @@ class SignalType:
     IV_SKEW            = "iv_skew"
     NET_PREMIUM        = "net_premium"
     MAX_PAIN_DISTANCE  = "max_pain_distance"
+    # HL-native signals — sourced from hlp.py
+    HL_TOP_TRADERS         = "hl_top_traders"
+    HLP_SENTIMENT          = "hlp_sentiment"
+    TOP_TRADER_POSITIONING = "top_trader_positioning"
 
 
 class Direction:
