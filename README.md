@@ -14,7 +14,7 @@ Mixing signal sources without weighting is how agents get manipulated. Every sig
 
 | Tier | Label | Examples | Latency | Trust model |
 |------|-------|----------|---------|-------------|
-| 1 | Chain-native | Hyperliquid, perp-liquidity panel | Sub-second | Cryptographically verifiable |
+| 1 | Chain-native | Hyperliquid, perp-liquidity panel, HLP vault | Sub-second | Cryptographically verifiable |
 | 2 | Indexed / prediction | Dune Analytics, Polymarket | Minutes | Depends on indexer or market integrity |
 | 3 | Social | Twitter/X, Discord, KOL calls | Seconds | Fully adversarial |
 
@@ -60,6 +60,7 @@ position_boost   = 1.5 if asset in open positions, else 1.0
 | Funding rate (8 venues) | perp-liquidity panel | `funding_cluster` | Chain-native |
 | OI dominance (8 venues) | perp-liquidity panel | `oi_cluster` | Chain-native |
 | Liquidation cluster proximity | hl-liquidation-heatmap | `liquidation_cascade` | Chain-native |
+| HLP vault positioning | HL info API | `hlp_sentiment` | Chain-native |
 | P/C ratio | deribit-options-flow | `options_cluster` | Indexed |
 | IV skew (25-delta) | deribit-options-flow | `options_cluster` | Indexed |
 | Net premium flow | deribit-options-flow | `options_cluster` | Indexed |
@@ -71,6 +72,7 @@ position_boost   = 1.5 if asset in open positions, else 1.0
 - **OI cluster**: All 8 venue OI dominance signals are collapsed into a single `oi_cluster` vote using **majority direction**. Majority vote is used (not median) because OI dominance is categorical, not a continuous value that can be meaningfully averaged.
 - **Options cluster**: P/C ratio, IV skew, net premium, and max pain are averaged into a single `options_cluster` vote. Prevents Deribit from getting 4× weight over a single chain-native signal.
 - **Liquidation cluster**: nearest significant liquidation cluster to spot, inferred from OI-delta on the HL `activeAssetCtx` WebSocket. Cluster above spot = bearish (sell-side pressure). Cluster below = bullish (buy-side magnet). Requires the `hl-liquidation-heatmap` streamer to be running to populate the local SQLite.
+- **HLP sentiment**: Contrarian signal from the HLP vault's live position. HLP is HL's native market maker and liquidator — its net position is the inverse of aggregate trader flow. HLP net short = traders crowded long = bearish. HLP net long = traders net short = squeeze setup. When HLP is flat (`position_relevant=False`), the signal abstains from the model vote. Confidence scales with gross notional: ≥$50M → 0.90, ≥$10M → 0.85, ≥$1M → 0.80, <$1M → 0.70.
 - **Model scores all validated events**: `score()` receives all validated signals, not the ranking-capped top-N. Ranking controls the agent payload (token budget). Scoring is independent.
 - **Equal weights**: `SIGNAL_WEIGHTS` in `model.py` uses `1.0` across all cluster sources. **These weights are unvalidated — no backtesting data exists yet.** Replace with empirically derived weights once historical data is available.
 - **Confluence over magnitude**: confidence is `magnitude × agreement_ratio`. A unanimous 3-source agreement outranks a single strong outlier.
@@ -100,16 +102,16 @@ position_boost   = 1.5 if asset in open positions, else 1.0
       "reason": "funding 80.0% APR (crowded longs)"
     },
     {
-      "signal_type": "options_cluster",
-      "source": "deribit",
+      "signal_type": "hlp_sentiment",
+      "source": "hlp_vault",
       "direction": "bearish",
-      "strength": 0.6,
+      "strength": 0.85,
       "weight": 1.0,
-      "weighted_contribution": -0.6,
-      "reason": "options cluster bearish (P/C ratio 1.60 put-heavy; IV skew +8.0pp put premium)"
+      "weighted_contribution": -0.85,
+      "reason": "HLP vault BTC position: net -42.5M USD (short), gross 42.5M USD. Traders are net long → bearish."
     }
   ],
-  "explanation": "BTC directional model: BEARISH with high confidence (71.0%). Confluence: 0 bullish / 3 bearish / 1 neutral out of 4 sources. Key drivers: funding 80.0% APR (crowded longs), options cluster bearish. Agreement ratio: 100%.",
+  "explanation": "BTC directional model: BEARISH with high confidence (71.0%). Confluence: 0 bullish / 3 bearish / 1 neutral out of 4 sources.",
   "weight_disclaimer": "UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability."
 }
 ```
@@ -137,7 +139,7 @@ The streamer writes inferred liquidation events to a local SQLite (`liquidations
 **Environment variables** (all optional — sources return `[]` without them):
 
 ```
-DUNE_API_KEY=...              # Dune Analytics (tier-2 gas volatility signal)
+DUNE_API_KEY=...              # Dune Analytics (tier-2 signals)
 TWITTER_BEARER_TOKEN=...      # Social source — stub, not yet implemented
 LIQUIDATION_DB=...            # Path to hl-liquidation-heatmap SQLite (default: liquidations.db)
 LIQUIDATION_LOOKBACK_DAYS=3   # How many days of fills to consider (default: 3)
@@ -181,26 +183,6 @@ signal-pipeline --asset BTC --verbose
 signal-pipeline --help
 ```
 
-### --explain output
-
-`--explain` prints a human-readable model breakdown to stderr. The JSON payload on stdout is unchanged.
-
-```
-━━ Model output: BTC ━━
-Direction  : BEARISH
-Confidence : 56.3%
-Confluence : 0 bullish / 3 bearish / 1 neutral out of 4 sources
-
-Signal breakdown:
-  ▼ [options_cluster     ] bearish  strength=0.55  weight=1.0  contrib=-0.550  | options cluster bearish (P/C ratio 1.60 put-heavy; IV skew +8.0pp put premium; net put premium $-5,000,000)
-  ▼ [funding_cluster     ] bearish  strength=0.50  weight=1.0  contrib=-0.500  | funding panel median 25.0% APR (crowded longs) | panel median across 8 venues (range 0.0%–80.0% APR)
-  ▼ [liquidation_cascade ] bearish  strength=0.60  weight=1.0  contrib=-0.600  | liquidation cluster $6,000,000 above spot ($68,250, 2.3% away). Sell-side pressure.
-  – [oi_cluster          ] neutral  strength=0.00  weight=1.0  contrib=+0.000  | OI panel: split (3 bullish / 3 bearish / 2 neutral)
-
-Explanation: BTC directional model: BEARISH with moderate confidence (56.3%). ...
-⚠  UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability.
-```
-
 ---
 
 ## Sample payload
@@ -227,69 +209,17 @@ Live output from `signal-pipeline --asset BTC --top 10 --position long:50000` (2
     },
     {
       "rank": 2,
-      "signal_type": "funding_rate",
-      "source": "grvt",
+      "signal_type": "hlp_sentiment",
+      "source": "hlp_vault",
       "trust_tier": 1,
-      "direction": "bearish",
-      "value": 10.95,
-      "score": 0.7911,
-      "position_relevant": true,
-      "summary": "grvt funding APR +10.95% (shorts paid). Rank 8/8 in panel."
-    },
-    {
-      "rank": 10,
-      "signal_type": "outcome_prob",
-      "source": "polymarket",
-      "trust_tier": 2,
       "direction": "neutral",
-      "value": 0.5,
-      "score": 0.4294,
-      "position_relevant": true,
-      "summary": "Polymarket: 'Will bitcoin hit $1m before GTA VI?' — YES 50.0% implied probability."
+      "value": 0.0,
+      "score": 0.0,
+      "position_relevant": false,
+      "summary": "HLP vault BTC: no open position (confirmed flat, total AUM $0.31B). Not a directional signal."
     }
   ],
-  "model": {
-    "direction": "bearish",
-    "confidence": 0.062,
-    "confluence": {
-      "bullish": 1,
-      "bearish": 1,
-      "neutral": 1,
-      "agreement_ratio": 0.5,
-      "summary": "1 bullish / 1 bearish / 1 neutral out of 3 sources"
-    },
-    "contributing_signals": [
-      {
-        "signal_type": "funding_cluster",
-        "source": "apex, aster, edgex, extended, grvt, hyperliquid, lighter, paradex",
-        "direction": "neutral",
-        "strength": 0.0,
-        "weight": 1.0,
-        "weighted_contribution": 0.0,
-        "reason": "funding panel median 0.1% APR (neutral zone) | panel median across 8 venues (range 0.0%–11.0% APR)"
-      },
-      {
-        "signal_type": "oi_cluster",
-        "source": "apex, aster, edgex, extended, grvt, hyperliquid, lighter, paradex",
-        "direction": "bullish",
-        "strength": 0.125,
-        "weight": 1.0,
-        "weighted_contribution": 0.125,
-        "reason": "OI panel: 1/8 venues bullish (avg confidence 0.12)"
-      },
-      {
-        "signal_type": "options_cluster",
-        "source": "deribit",
-        "direction": "bearish",
-        "strength": 0.5,
-        "weight": 1.0,
-        "weighted_contribution": -0.5,
-        "reason": "options cluster bearish (P/C ratio 0.61 (call-heavy); IV skew +18.9pp (put premium); net put premium $-22,317,744)"
-      }
-    ],
-    "explanation": "BTC directional model: BEARISH with low confidence (6.2%). Confluence: 1 bullish / 1 bearish / 1 neutral out of 3 sources. Key drivers: options cluster bearish. Agreement ratio: 50%.",
-    "weight_disclaimer": "UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability."
-  },
+  "model": { "...": "..." },
   "token_estimate": 950
 }
 ```
@@ -324,7 +254,7 @@ class YourSource(SignalSource):
             source=self.SOURCE_NAME,
             source_type=self.SOURCE_TYPE,
             asset=asset,
-            signal_type=SignalType.WHALE_FLOW,  # pick from schema.SignalType
+            signal_type=SignalType.WHALE_FLOW,
             value=raw["amount"],
             direction=Direction.BULLISH,
             confidence=0.85,
@@ -338,8 +268,6 @@ class YourSource(SignalSource):
 
 The validation, ranking, and assembly layers pick it up automatically.
 
-To add a new signal type to the model, add a `_vote_yourtype()` function in `model.py` and register it in `_VOTE_FN`. If it's an options-style signal from the same underlying instrument, add it to `_OPTIONS_CLUSTER`. If it's a per-venue signal (like funding rate or OI), add it to `_FUNDING_CLUSTER` or `_OI_CLUSTER` so it gets collapsed into a single panel vote rather than counted independently per venue.
-
 ---
 
 ## Dune signals
@@ -349,16 +277,40 @@ To add a new signal type to the model, add a `_vote_yourtype()` function in `mod
 | `gas_volatility` | [7610937](https://dune.com/queries/7610937) | Live | `docs/dune_queries/gas_volatility.sql` |
 | `smart_money` | [7611082](https://dune.com/queries/7611082) | Live | `docs/dune_queries/smart_money.sql` |
 | `whale_flow` | [7611264](https://dune.com/queries/7611264) | Live | `examples/dune_whale_flow.sql` |
+| `hl_top_traders` | pending | Needs query ID | `docs/dune_queries/hl_top_traders.sql` |
 
-**`gas_volatility`** — HyperEVM block gas coefficient of variation over a 1h rolling window. Proxy for network congestion and execution risk. High CV = bearish (elevated fees), low CV = bullish (calm network).
+**`gas_volatility`** — HyperEVM block gas coefficient of variation over a 1h rolling window. Proxy for network congestion and execution risk.
 
-**`smart_money`** — Net USDC bridge flow of curated known wallets (Wintermute, Fasanara Capital, Abraxas Capital, James Wynn, and others) into/out of Hyperliquid over the last 24h. Source: `erc20_arbitrum.evt_Transfer`, near real-time. Net deposit = bullish positioning intent, net withdrawal = de-risking.
+**`smart_money`** — Net USDC bridge flow of curated known wallets (Wintermute, Fasanara Capital, Abraxas Capital, James Wynn, and others) into/out of Hyperliquid over 24h. Source: `erc20_arbitrum.evt_Transfer`.
 
-**`whale_flow`** — Net USDC flow of individual transfers >=\$500k through the Hyperliquid bridge, last 24h. Source: `erc20_arbitrum.evt_Transfer`, both native USDC and USDC.e. No wallet filter — size is the signal. Direction thresholds: ±\$5M (2-3 whale moves).
+**`whale_flow`** — Net USDC flow of individual transfers ≥$500k through the Hyperliquid bridge, last 24h. No wallet filter — size is the signal.
 
-All three are global signals (not asset-specific). The Dune queries accept an `{{asset}}` parameter so rows are tagged correctly for the pipeline's asset filter.
+**`hl_top_traders`** — Aggregate PnL of the top-100 Hyperliquid traders by volume. Source: `dune."swell-network".dataset_hyperliquid_top_users` — published by Liquid Labs (Faro's parent company). Positive aggregate PnL = top traders winning = bullish conditions. Direction thresholds: ±$5M. To activate: paste `docs/dune_queries/hl_top_traders.sql` into Dune, save the query, and replace `0` in `QUERY_IDS[SignalType.HL_TOP_TRADERS]` in `sources/dune.py` with the assigned query ID.
 
-To add more Dune signals: write a query that outputs `asset, value, direction_hint, summary` columns, save it on Dune, and add its ID to `QUERY_IDS` in `src/signal_pipeline/sources/dune.py`.
+All Dune signals are global (not asset-specific). Queries accept an `{{asset}}` parameter so rows are tagged correctly for the pipeline's asset filter. To add more: write a query outputting `asset, value, direction_hint, summary` columns and add its ID to `QUERY_IDS` in `sources/dune.py`.
+
+---
+
+## HLP vault signal
+
+`sources/hlp.py` reads the HLP vault's live position from the Hyperliquid info endpoint.
+
+```
+POST https://api.hyperliquid.xyz/info
+{"type": "clearinghouseState", "user": "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303"}
+```
+
+No API key required. The endpoint is public. Suitable for polling every 1–5 minutes.
+
+**Signal: `HLP_SENTIMENT`** — contrarian. HLP absorbs trader flow as market maker and liquidator. Its net position is the inverse of aggregate trader positioning.
+
+| HLP position | Trader position | Signal |
+|---|---|---|
+| Net short > $5M | Crowded long | `bearish` |
+| Net long > $5M | Net short | `bullish` (squeeze setup) |
+| Flat or < $5M | Noise | `neutral`, `position_relevant=False` |
+
+**Signal: `TOP_TRADER_POSITIONING`** — optional, disabled by default. Pass `registry_addresses` to `HLPSource` to activate. Uses `dune."swell-network".dataset_hyperliquid_top_users` as a wallet whitelist, fetches `clearinghouseState` for each address, and aggregates net notional. Direction follows the traders (not contrarian).
 
 ---
 
@@ -366,8 +318,9 @@ To add more Dune signals: write a query that outputs `asset, value, direction_hi
 
 - **Model weights are unvalidated.** Equal weights are an honest baseline. They must be replaced with backtested weights before the model output is used for live sizing decisions.
 - **Options signals reflect derivatives markets, not HL spot directly.** P/C ratio and IV skew from Deribit are correlated with but not identical to Hyperliquid perp sentiment.
-- **Social source is a stub.** `social.py` returns `[]`. Twitter/X API v2 is expensive; interface is defined for when it's implemented.
-- **Polymarket market matching is fuzzy.** Gamma API local filtering catches most BTC/Bitcoin markets but niche assets may return zero matches or near-matches.
+- **Social source is a stub.** `social.py` returns `[]`. Interface is defined for when it's implemented.
+- **Polymarket market matching is fuzzy.** Gamma API local filtering catches most BTC/Bitcoin markets but niche assets may return zero matches.
 - **No persistence.** `MemoryStore` is process-local. A ClickHouse or TimescaleDB backend would need to implement `store/base.py` `SignalStore` ABC.
-- **Liquidation source requires a running streamer.** `LiquidationSource` reads from a local SQLite populated by `hl-liquidation-heatmap/stream.py`. If the streamer is not running or the DB is empty, `liquidation_cascade` abstains from the model vote. This is by design — no reliable free HTTP endpoint exists for historical HL liquidation data.
+- **Liquidation source requires a running streamer.** `LiquidationSource` reads from a local SQLite populated by `hl-liquidation-heatmap/stream.py`. No reliable free HTTP endpoint exists for historical HL liquidation data.
 - **No streaming mode.** CLI is a one-shot fetch. A polling loop or WebSocket subscription mode would be the next step for real-time agent feeds.
+- **Dune external datasets for HL are largely stale.** All community-uploaded HL datasets (21shares, ramiro_mata, etc.) stopped updating between March 2025 and April 2026. The pipeline's Dune queries run against live Dune-native tables (Arbitrum bridge events, HyperEVM blocks) — not external datasets.
