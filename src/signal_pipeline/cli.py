@@ -34,11 +34,12 @@ log = logging.getLogger(__name__)
 
 
 def _default_sources():
+    from signal_pipeline.sources.deribit import DeribitSource
     from signal_pipeline.sources.dune import DuneSource
     from signal_pipeline.sources.perp import PerpSource
     from signal_pipeline.sources.polymarket import PolymarketSource
     from signal_pipeline.sources.social import SocialSource
-    return [PerpSource(), DuneSource(), PolymarketSource(), SocialSource()]
+    return [DeribitSource(), PerpSource(), DuneSource(), PolymarketSource(), SocialSource()]
 
 
 def _parse_position(position_str: str | None) -> dict[str, Any]:
@@ -104,7 +105,10 @@ async def _run(
     click.echo(f"  Ranked {len(ranked)} signals (budget: {token_budget} tokens)", err=True)
 
     # 5. Model layer — directional verdict
-    model_result = model_score(ranked, asset=asset)
+    # Pass ALL validated events, not just the ranked top-N.
+    # Ranking controls the agent payload (token budget).
+    # The model scores everything — ranking cutoff should not blind it.
+    model_result = model_score(validated, asset=asset)
     click.echo(
         f"  Model: {model_result.direction.upper()}  "
         f"confidence={model_result.confidence:.1%}  "

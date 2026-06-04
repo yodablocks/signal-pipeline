@@ -19,7 +19,9 @@ import pytest
 
 from signal_pipeline.model import (
     ConfluenceResult,
-    _average_options_cluster,
+    _collapse_funding_cluster,
+    _collapse_oi_cluster,
+    _collapse_options_cluster,
     _measure_confluence,
     _vote_funding_rate,
     _vote_iv_skew,
@@ -65,37 +67,38 @@ def _event(
 # ---------------------------------------------------------------------------
 
 class TestVoteFundingRate:
+    # _vote_funding_rate now takes a float (panel median), not a SignalEvent.
+
     def test_strongly_positive_is_bearish(self):
-        d, s, r = _vote_funding_rate(_event(SignalType.FUNDING_RATE, 80.0))
+        d, s, r = _vote_funding_rate(80.0)
         assert d == Direction.BEARISH
         assert s > 0.0
         assert "crowded longs" in r
 
     def test_strongly_negative_is_bullish(self):
-        d, s, r = _vote_funding_rate(_event(SignalType.FUNDING_RATE, -80.0))
+        d, s, r = _vote_funding_rate(-80.0)
         assert d == Direction.BULLISH
         assert s > 0.0
         assert "crowded shorts" in r
 
     def test_near_zero_is_neutral(self):
-        d, s, r = _vote_funding_rate(_event(SignalType.FUNDING_RATE, 5.0))
+        d, s, r = _vote_funding_rate(5.0)
         assert d == Direction.NEUTRAL
         assert s == 0.0
 
     def test_strength_capped_at_one(self):
-        d, s, _ = _vote_funding_rate(_event(SignalType.FUNDING_RATE, 999.0))
+        d, s, _ = _vote_funding_rate(999.0)
         assert s <= 1.0
 
     def test_threshold_boundary_positive(self):
-        # Exactly at threshold (v == 20.0): condition is v > 20.0 (strict), so neutral.
-        # Strength would be 0.0 either way: (20 - 20) / 80 = 0.
-        d, s, _ = _vote_funding_rate(_event(SignalType.FUNDING_RATE, 20.0))
+        # Exactly at threshold (v == 20.0): strict >, so neutral.
+        d, s, _ = _vote_funding_rate(20.0)
         assert d == Direction.NEUTRAL
         assert s == 0.0
 
     def test_threshold_boundary_negative(self):
-        # Exactly at threshold (v == -20.0): condition is v < -20.0 (strict), so neutral.
-        d, s, _ = _vote_funding_rate(_event(SignalType.FUNDING_RATE, -20.0))
+        # Exactly at threshold (v == -20.0): strict <, so neutral.
+        d, s, _ = _vote_funding_rate(-20.0)
         assert d == Direction.NEUTRAL
         assert s == 0.0
 
@@ -236,13 +239,13 @@ class TestVoteMaxPain:
 # Options cluster averaging
 # ---------------------------------------------------------------------------
 
-class TestAverageOptionsCluster:
+class TestCollapseOptionsCluster:
     def test_unanimous_bullish(self):
         votes = [
             (Direction.BULLISH, 0.6, "call-heavy", "pc_ratio"),
             (Direction.BULLISH, 0.8, "call premium", "iv_skew"),
         ]
-        d, s, r = _average_options_cluster(votes)
+        d, s, r = _collapse_options_cluster(votes)
         assert d == Direction.BULLISH
         assert s == pytest.approx(0.7)  # avg of 0.6, 0.8 → 1.4/2 = 0.7
 
@@ -251,7 +254,7 @@ class TestAverageOptionsCluster:
             (Direction.BEARISH, 0.5, "put-heavy", "pc_ratio"),
             (Direction.BEARISH, 0.5, "put premium", "iv_skew"),
         ]
-        d, s, _ = _average_options_cluster(votes)
+        d, s, _ = _collapse_options_cluster(votes)
         assert d == Direction.BEARISH
 
     def test_split_returns_neutral(self):
@@ -259,12 +262,12 @@ class TestAverageOptionsCluster:
             (Direction.BULLISH, 0.5, "x", "pc_ratio"),
             (Direction.BEARISH, 0.5, "y", "iv_skew"),
         ]
-        d, s, _ = _average_options_cluster(votes)
+        d, s, _ = _collapse_options_cluster(votes)
         assert d == Direction.NEUTRAL
 
     def test_single_vote_preserved(self):
         votes = [(Direction.BULLISH, 0.9, "strong calls", "pc_ratio")]
-        d, s, _ = _average_options_cluster(votes)
+        d, s, _ = _collapse_options_cluster(votes)
         assert d == Direction.BULLISH
         assert s == pytest.approx(0.9)
 
@@ -421,6 +424,149 @@ class TestScore:
         ]
         result = score(events, asset="BTC")
         assert result.direction == Direction.NEUTRAL
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# OI cluster collapse
+# ---------------------------------------------------------------------------
+
+class TestCollapseOICluster:
+    def _oi_events(self, directions, asset="BTC"):
+        return [
+            _event(SignalType.OI_DOMINANCE, 0.0, direction=d, confidence=0.8,
+                   asset=asset, source=f"venue_{i}")
+            for i, d in enumerate(directions)
+        ]
+
+    def test_majority_bullish(self):
+        events = self._oi_events([Direction.BULLISH, Direction.BULLISH, Direction.NEUTRAL])
+        d, s, r, sources = _collapse_oi_cluster(events)
+        assert d == Direction.BULLISH
+        assert s > 0.0
+        assert "bullish" in r
+
+    def test_majority_bearish(self):
+        events = self._oi_events([Direction.BEARISH, Direction.BEARISH, Direction.NEUTRAL])
+        d, s, r, sources = _collapse_oi_cluster(events)
+        assert d == Direction.BEARISH
+
+    def test_split_is_neutral(self):
+        events = self._oi_events([Direction.BULLISH, Direction.BEARISH])
+        d, s, r, sources = _collapse_oi_cluster(events)
+        assert d == Direction.NEUTRAL
+        assert s == 0.0
+
+    def test_all_neutral_is_neutral(self):
+        events = self._oi_events([Direction.NEUTRAL, Direction.NEUTRAL, Direction.NEUTRAL])
+        d, s, r, sources = _collapse_oi_cluster(events)
+        assert d == Direction.NEUTRAL
+
+    def test_sources_label_populated(self):
+        events = self._oi_events([Direction.BULLISH, Direction.NEUTRAL])
+        _, _, _, sources = _collapse_oi_cluster(events)
+        assert len(sources) > 0
+
+    def test_strength_capped_at_one(self):
+        events = self._oi_events([Direction.BULLISH] * 5)
+        _, s, _, _ = _collapse_oi_cluster(events)
+        assert s <= 1.0
+
+
+class TestScoreOICluster:
+    def test_oi_cluster_counted_once(self):
+        events = [
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.BULLISH, source="hl"),
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.NEUTRAL, source="paradex"),
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.BULLISH, source="apex"),
+        ]
+        result = score(events, asset="BTC")
+        oi = [cs for cs in result.contributing_signals if cs.signal_type == "oi_cluster"]
+        assert len(oi) == 1
+
+    def test_majority_bullish_venues_produces_bullish(self):
+        events = [
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.BULLISH, confidence=0.9, source="hl"),
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.BULLISH, confidence=0.8, source="paradex"),
+            _event(SignalType.OI_DOMINANCE, 0.0, Direction.NEUTRAL, source="apex"),
+        ]
+        result = score(events, asset="BTC")
+        oi = next(cs for cs in result.contributing_signals if cs.signal_type == "oi_cluster")
+        assert oi.direction == Direction.BULLISH
+
+
+# ---------------------------------------------------------------------------
+# Funding cluster collapse
+# ---------------------------------------------------------------------------
+
+class TestCollapseFundingCluster:
+    def _funding_events(self, values, asset="BTC"):
+        return [
+            _event(SignalType.FUNDING_RATE, v, asset=asset, source=f"venue_{i}")
+            for i, v in enumerate(values)
+        ]
+
+    def test_neutral_panel_is_neutral(self):
+        from signal_pipeline.model import _collapse_funding_cluster
+        events = self._funding_events([0.1, 0.2, 0.1, 0.0, 0.1])
+        d, s, r, sources = _collapse_funding_cluster(events)
+        assert d == Direction.NEUTRAL
+        assert s == 0.0
+
+    def test_high_median_is_bearish(self):
+        from signal_pipeline.model import _collapse_funding_cluster
+        events = self._funding_events([10.0, 25.0, 30.0, 22.0, 28.0])
+        d, s, r, sources = _collapse_funding_cluster(events)
+        assert d == Direction.BEARISH
+        assert s > 0.0
+        assert "median" in r
+
+    def test_outlier_does_not_drive_direction(self):
+        from signal_pipeline.model import _collapse_funding_cluster
+        # GRVT outlier at 11% — rest of panel near zero
+        # median ~ 0.1% -> neutral
+        events = self._funding_events([11.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.0])
+        d, s, r, sources = _collapse_funding_cluster(events)
+        assert d == Direction.NEUTRAL
+
+    def test_reason_includes_range(self):
+        from signal_pipeline.model import _collapse_funding_cluster
+        events = self._funding_events([0.1, 11.0, 0.2])
+        d, s, r, sources = _collapse_funding_cluster(events)
+        assert "range" in r
+
+    def test_sources_label_populated(self):
+        from signal_pipeline.model import _collapse_funding_cluster
+        events = self._funding_events([0.1, 0.2])
+        _, _, _, sources = _collapse_funding_cluster(events)
+        assert len(sources) > 0
+
+
+class TestScoreFundingCluster:
+    def test_funding_cluster_counted_once(self):
+        events = [
+            _event(SignalType.FUNDING_RATE, 0.1, asset="BTC", source="hl"),
+            _event(SignalType.FUNDING_RATE, 0.2, asset="BTC", source="paradex"),
+            _event(SignalType.FUNDING_RATE, 0.1, asset="BTC", source="apex"),
+            _event(SignalType.FUNDING_RATE, 11.0, asset="BTC", source="grvt"),
+        ]
+        result = score(events, asset="BTC")
+        cluster = [cs for cs in result.contributing_signals if cs.signal_type == "funding_cluster"]
+        assert len(cluster) == 1
+
+    def test_grvt_outlier_does_not_produce_bearish(self):
+        events = [
+            _event(SignalType.FUNDING_RATE, 11.0, asset="BTC", source="grvt"),
+            _event(SignalType.FUNDING_RATE, 0.1, asset="BTC", source="hl"),
+            _event(SignalType.FUNDING_RATE, 0.2, asset="BTC", source="paradex"),
+            _event(SignalType.FUNDING_RATE, 0.1, asset="BTC", source="apex"),
+        ]
+        result = score(events, asset="BTC")
+        cluster = next(cs for cs in result.contributing_signals if cs.signal_type == "funding_cluster")
+        assert cluster.direction == Direction.NEUTRAL
 
 
 # ---------------------------------------------------------------------------
