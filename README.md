@@ -67,9 +67,12 @@ position_boost   = 1.5 if asset in open positions, else 1.0
 
 **Design decisions:**
 
-- **Options cluster**: P/C ratio, IV skew, net premium, and max pain are averaged into a single vote before scoring. Prevents Deribit from getting 4× weight over a single chain-native signal.
-- **Equal weights**: `SIGNAL_WEIGHTS` in `model.py` uses `1.0` across all sources. **These weights are unvalidated — no backtesting data exists yet.** Replace with empirically derived weights once historical data is available.
-- **Confluence over magnitude**: confidence is `magnitude × agreement_ratio`. A unanimous 4-source agreement outranks a single strong outlier.
+- **Funding cluster**: All 8 venue funding rates are collapsed into a single `funding_cluster` vote using the **panel median**. Median is used for consistency with MAD anomaly detection — a single venue stuck at an extreme rate (e.g. GRVT at 11% APR cap) does not distort the panel picture.
+- **OI cluster**: All 8 venue OI dominance signals are collapsed into a single `oi_cluster` vote using **majority direction**. Majority vote is used (not median) because OI dominance is categorical, not a continuous value that can be meaningfully averaged.
+- **Options cluster**: P/C ratio, IV skew, net premium, and max pain are averaged into a single `options_cluster` vote. Prevents Deribit from getting 4× weight over a single chain-native signal.
+- **Model scores all validated events**: `score()` receives all validated signals, not the ranking-capped top-N. Ranking controls the agent payload (token budget). Scoring is independent.
+- **Equal weights**: `SIGNAL_WEIGHTS` in `model.py` uses `1.0` across all cluster sources. **These weights are unvalidated — no backtesting data exists yet.** Replace with empirically derived weights once historical data is available.
+- **Confluence over magnitude**: confidence is `magnitude × agreement_ratio`. A unanimous 3-source agreement outranks a single strong outlier.
 - **Neutral band**: `|raw_score| ≤ 0.05` returns neutral. Prevents marginal noise from producing false directional calls.
 
 **Output (included in agent payload as `model` block):**
@@ -169,16 +172,15 @@ signal-pipeline --help
 ```
 ━━ Model output: BTC ━━
 Direction  : BEARISH
-Confidence : 71.0%
-Confluence : 0 bullish / 3 bearish / 1 neutral out of 4 sources
+Confidence : 62.5%
+Confluence : 0 bullish / 2 bearish / 1 neutral out of 3 sources
 
 Signal breakdown:
-  ▼ [funding_rate        ] bearish  strength=0.75  weight=1.0  contrib=-0.750  | funding 80.0% APR (crowded longs)
-  ▼ [liquidation_cascade ] bearish  strength=0.60  weight=1.0  contrib=-0.600  | liquidation cluster $6,000,000 above spot
-  ▼ [options_cluster     ] bearish  strength=0.55  weight=1.0  contrib=-0.550  | options cluster bearish (P/C 1.60 put-heavy; IV skew +8.0pp)
-  – [oi_dominance        ] neutral  strength=0.00  weight=1.0  contrib=+0.000  | OI trend neutral
+  ▼ [options_cluster     ] bearish  strength=0.55  weight=1.0  contrib=-0.550  | options cluster bearish (P/C ratio 1.60 put-heavy; IV skew +8.0pp put premium; net put premium $-5,000,000)
+  ▼ [funding_cluster     ] bearish  strength=0.50  weight=1.0  contrib=-0.500  | funding panel median 25.0% APR (crowded longs) | panel median across 8 venues (range 0.0%–80.0% APR)
+  – [oi_cluster          ] neutral  strength=0.00  weight=1.0  contrib=+0.000  | OI panel: split (3 bullish / 3 bearish / 2 neutral)
 
-Explanation: BTC directional model: BEARISH with high confidence (71.0%). ...
+Explanation: BTC directional model: BEARISH with moderate confidence (62.5%). ...
 ⚠  UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability.
 ```
 
@@ -186,7 +188,7 @@ Explanation: BTC directional model: BEARISH with high confidence (71.0%). ...
 
 ## Sample payload
 
-Live output from `signal-pipeline --asset BTC --top 10 --position long:50000` (2026-05-29):
+Live output from `signal-pipeline --asset BTC --top 10 --position long:50000` (2026-06-04):
 
 ```json
 {
@@ -231,26 +233,44 @@ Live output from `signal-pipeline --asset BTC --top 10 --position long:50000` (2
   ],
   "model": {
     "direction": "bearish",
-    "confidence": 0.71,
+    "confidence": 0.062,
     "confluence": {
-      "bullish": 0,
-      "bearish": 3,
+      "bullish": 1,
+      "bearish": 1,
       "neutral": 1,
-      "agreement_ratio": 1.0,
-      "summary": "0 bullish / 3 bearish / 1 neutral out of 4 sources"
+      "agreement_ratio": 0.5,
+      "summary": "1 bullish / 1 bearish / 1 neutral out of 3 sources"
     },
     "contributing_signals": [
       {
-        "signal_type": "funding_rate",
-        "source": "hyperliquid",
-        "direction": "bearish",
-        "strength": 0.75,
+        "signal_type": "funding_cluster",
+        "source": "apex, aster, edgex, extended, grvt, hyperliquid, lighter, paradex",
+        "direction": "neutral",
+        "strength": 0.0,
         "weight": 1.0,
-        "weighted_contribution": -0.75,
-        "reason": "funding 80.0% APR (crowded longs)"
+        "weighted_contribution": 0.0,
+        "reason": "funding panel median 0.1% APR (neutral zone) | panel median across 8 venues (range 0.0%–11.0% APR)"
+      },
+      {
+        "signal_type": "oi_cluster",
+        "source": "apex, aster, edgex, extended, grvt, hyperliquid, lighter, paradex",
+        "direction": "bullish",
+        "strength": 0.125,
+        "weight": 1.0,
+        "weighted_contribution": 0.125,
+        "reason": "OI panel: 1/8 venues bullish (avg confidence 0.12)"
+      },
+      {
+        "signal_type": "options_cluster",
+        "source": "deribit",
+        "direction": "bearish",
+        "strength": 0.5,
+        "weight": 1.0,
+        "weighted_contribution": -0.5,
+        "reason": "options cluster bearish (P/C ratio 0.61 (call-heavy); IV skew +18.9pp (put premium); net put premium $-22,317,744)"
       }
     ],
-    "explanation": "BTC directional model: BEARISH with high confidence (71.0%). Confluence: 0 bullish / 3 bearish / 1 neutral out of 4 sources. Key drivers: funding 80.0% APR (crowded longs). Agreement ratio: 100%.",
+    "explanation": "BTC directional model: BEARISH with low confidence (6.2%). Confluence: 1 bullish / 1 bearish / 1 neutral out of 3 sources. Key drivers: options cluster bearish. Agreement ratio: 50%.",
     "weight_disclaimer": "UNVALIDATED: equal weights used (no backtesting data). Do not treat confidence as a calibrated probability."
   },
   "token_estimate": 950
@@ -301,7 +321,7 @@ class YourSource(SignalSource):
 
 The validation, ranking, and assembly layers pick it up automatically.
 
-To add a new signal type to the model, add a `_vote_yourtype()` function in `model.py` and register it in `_VOTE_FN`. If it's an options-style signal from the same underlying instrument, add it to `_OPTIONS_CLUSTER` so it gets averaged into the cluster rather than counted independently.
+To add a new signal type to the model, add a `_vote_yourtype()` function in `model.py` and register it in `_VOTE_FN`. If it's an options-style signal from the same underlying instrument, add it to `_OPTIONS_CLUSTER`. If it's a per-venue signal (like funding rate or OI), add it to `_FUNDING_CLUSTER` or `_OI_CLUSTER` so it gets collapsed into a single panel vote rather than counted independently per venue.
 
 ---
 
